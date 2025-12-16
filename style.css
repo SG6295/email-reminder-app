@@ -161,3 +161,23 @@ h1 {
     cursor: pointer;
     font-weight: 600;
 }
+
+.info-box {
+    background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.info-box p {
+    color: #333;
+    font-size: 16px;
+    margin: 12px 0;
+    display: flex;
+    align-items: center;
+}
+
+.info-box strong {
+    color: #667eea;
+    margin-right: 10px;
+    font-size: 20px;
+}
