@@ -1,4 +1,26 @@
 const { getStore } = require('@netlify/blobs');
+const fs = require('fs').promises;
+const path = require('path');
+
+// Helper functions for local storage
+const LOCAL_STORAGE_DIR = path.join('/tmp', 'reminders');
+
+async function initLocalStorage() {
+  try {
+    await fs.mkdir(LOCAL_STORAGE_DIR, { recursive: true });
+  } catch (error) {
+    console.error('Error creating local storage directory:', error);
+  }
+}
+
+async function saveToLocalStorage(key, value) {
+  await initLocalStorage();
+  const filePath = path.join(LOCAL_STORAGE_DIR, `${key}.json`);
+  await fs.writeFile(filePath, value, 'utf8');
+}
+
+// Check if we're running in local dev or production
+const isLocalDev = !process.env.NETLIFY_DEV || process.env.CONTEXT === 'dev';
 
 exports.handler = async (event, context) => {
   // Enable CORS
@@ -36,9 +58,9 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           success: false,
-          error: 'Missing required fields' 
+          error: 'Missing required fields'
         })
       };
     }
@@ -49,9 +71,9 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           success: false,
-          error: 'Invalid email format' 
+          error: 'Invalid email format'
         })
       };
     }
@@ -62,15 +84,12 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           success: false,
-          error: 'Reminder time must be in the future' 
+          error: 'Reminder time must be in the future'
         })
       };
     }
-
-    // Get the reminders store
-    const store = getStore('reminders');
 
     // Create unique ID for this reminder
     const reminderId = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -85,10 +104,17 @@ exports.handler = async (event, context) => {
       sent: false
     };
 
-    // Store in Netlify Blobs
-    await store.set(reminderId, JSON.stringify(reminder));
-
-    console.log('Reminder created:', reminderId);
+    // Store the reminder (local or Netlify Blobs)
+    try {
+      const store = getStore('reminders');
+      await store.set(reminderId, JSON.stringify(reminder));
+      console.log('Reminder saved to Netlify Blobs:', reminderId);
+    } catch (blobError) {
+      // Fallback to local storage if Blobs aren't available
+      console.log('Netlify Blobs not available, using local storage');
+      await saveToLocalStorage(reminderId, JSON.stringify(reminder));
+      console.log('Reminder saved to local storage:', reminderId);
+    }
 
     return {
       statusCode: 200,

@@ -1,7 +1,37 @@
 const { getStore } = require('@netlify/blobs');
 const { Resend } = require('resend');
+const fs = require('fs').promises;
+const path = require('path');
 
-exports.handler = async (event, context) => {
+// Helper functions for local storage
+const LOCAL_STORAGE_DIR = path.join('/tmp', 'reminders');
+
+async function getFromLocalStorage() {
+  try {
+    const files = await fs.readdir(LOCAL_STORAGE_DIR);
+    const reminders = [];
+
+    for (const file of files) {
+      if (file.endsWith('.json')) {
+        const filePath = path.join(LOCAL_STORAGE_DIR, file);
+        const content = await fs.readFile(filePath, 'utf8');
+        const key = file.replace('.json', '');
+        reminders.push({ key, content });
+      }
+    }
+
+    return reminders;
+  } catch (error) {
+    return [];
+  }
+}
+
+async function updateLocalStorage(key, value) {
+  const filePath = path.join(LOCAL_STORAGE_DIR, `${key}.json`);
+  await fs.writeFile(filePath, value, 'utf8');
+}
+
+exports.handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json'
@@ -21,18 +51,35 @@ exports.handler = async (event, context) => {
     // Initialize Resend
     const resend = new Resend(process.env.RESEND_API_KEY);
 
-    // Get the reminders store
-    const store = getStore('reminders');
+    // Get all reminders (try Netlify Blobs first, fallback to local)
+    let reminders = [];
+    let usingLocalStorage = false;
 
-    // Get all reminders
-    const { blobs } = await store.list();
-    
-    if (!blobs || blobs.length === 0) {
+    try {
+      const store = getStore('reminders');
+      const { blobs } = await store.list();
+
+      if (blobs && blobs.length > 0) {
+        for (const blob of blobs) {
+          const content = await store.get(blob.key);
+          reminders.push({ key: blob.key, content, store });
+        }
+        console.log('Using Netlify Blobs storage');
+      }
+    } catch (blobError) {
+      // Fallback to local storage
+      console.log('Netlify Blobs not available, using local storage');
+      usingLocalStorage = true;
+      const localReminders = await getFromLocalStorage();
+      reminders = localReminders;
+    }
+
+    if (reminders.length === 0) {
       console.log('No reminders found');
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           message: 'No reminders to check',
           checked: 0,
           sent: 0
@@ -45,13 +92,12 @@ exports.handler = async (event, context) => {
     let sentCount = 0;
 
     // Check each reminder
-    for (const blob of blobs) {
+    for (const item of reminders) {
       try {
         checkedCount++;
-        
+
         // Get reminder data
-        const reminderJson = await store.get(blob.key);
-        const reminder = JSON.parse(reminderJson);
+        const reminder = JSON.parse(item.content);
 
         // Skip if already sent
         if (reminder.sent) {
@@ -89,8 +135,14 @@ exports.handler = async (event, context) => {
             // Mark as sent
             reminder.sent = true;
             reminder.sentAt = new Date().toISOString();
-            await store.set(reminder.id, JSON.stringify(reminder));
-            
+
+            // Update storage
+            if (usingLocalStorage) {
+              await updateLocalStorage(item.key, JSON.stringify(reminder));
+            } else if (item.store) {
+              await item.store.set(reminder.id, JSON.stringify(reminder));
+            }
+
             sentCount++;
             console.log(`Successfully sent reminder: ${reminder.id}`);
 
@@ -100,7 +152,7 @@ exports.handler = async (event, context) => {
           }
         }
       } catch (reminderError) {
-        console.error(`Error processing reminder ${blob.key}:`, reminderError);
+        console.error(`Error processing reminder ${item.key}:`, reminderError);
         // Continue to next reminder
       }
     }
