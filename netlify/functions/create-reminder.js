@@ -1,4 +1,4 @@
-const { createClient } = require('@supabase/supabase-js');
+const { getStore } = require('@netlify/blobs');
 
 exports.handler = async (event, context) => {
   // Enable CORS
@@ -9,11 +9,16 @@ exports.handler = async (event, context) => {
     'Content-Type': 'application/json'
   };
 
-  // Handle preflight
+  // Handle preflight request
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+    return {
+      statusCode: 200,
+      headers,
+      body: ''
+    };
   }
 
+  // Only allow POST
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
@@ -23,6 +28,7 @@ exports.handler = async (event, context) => {
   }
 
   try {
+    // Parse request body
     const { email, reminderText, reminderDate, reminderTime } = JSON.parse(event.body);
 
     // Validate inputs
@@ -30,26 +36,59 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Missing required fields' })
+        body: JSON.stringify({ 
+          success: false,
+          error: 'Missing required fields' 
+        })
       };
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ 
+          success: false,
+          error: 'Invalid email format' 
+        })
+      };
+    }
+
+    // Create datetime and validate it's in the future
+    const reminderDateTime = new Date(`${reminderDate}T${reminderTime}`);
+    if (reminderDateTime <= new Date()) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ 
+          success: false,
+          error: 'Reminder time must be in the future' 
+        })
+      };
+    }
+
+    // Get the reminders store
+    const store = getStore('reminders');
+
+    // Create unique ID for this reminder
+    const reminderId = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
     // Create reminder object
     const reminder = {
-      email,
+      id: reminderId,
+      email: email,
       text: reminderText,
-      date: reminderDate,
-      time: reminderTime,
-      dateTime: new Date(`${reminderDate}T${reminderTime}`).toISOString(),
-      sent: false,
-      createdAt: new Date().toISOString()
+      scheduledTime: reminderDateTime.toISOString(),
+      createdAt: new Date().toISOString(),
+      sent: false
     };
 
-    // Store in Netlify Blobs (simple key-value storage)
-    const { getStore } = await import('@netlify/blobs');
-    const store = getStore('reminders');
-    const id = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    await store.set(id, JSON.stringify(reminder));
+    // Store in Netlify Blobs
+    await store.set(reminderId, JSON.stringify(reminder));
+
+    console.log('Reminder created:', reminderId);
 
     return {
       statusCode: 200,
@@ -57,17 +96,18 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         success: true,
         message: 'Reminder created successfully',
-        id
+        reminderId: reminderId
       })
     };
+
   } catch (error) {
     console.error('Error creating reminder:', error);
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({
-        error: 'Failed to create reminder',
-        details: error.message
+        success: false,
+        error: 'Internal server error: ' + error.message
       })
     };
   }

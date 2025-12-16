@@ -1,3 +1,4 @@
+const { getStore } = require('@netlify/blobs');
 const { Resend } = require('resend');
 
 exports.handler = async (event, context) => {
@@ -7,81 +8,117 @@ exports.handler = async (event, context) => {
   };
 
   try {
-    // Initialize Resend with API key from environment variable
+    // Check if Resend API key is configured
+    if (!process.env.RESEND_API_KEY) {
+      console.error('RESEND_API_KEY not configured');
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: 'Email service not configured' })
+      };
+    }
+
+    // Initialize Resend
     const resend = new Resend(process.env.RESEND_API_KEY);
 
-    // Get all reminders from Netlify Blobs
-    const { getStore } = await import('@netlify/blobs');
+    // Get the reminders store
     const store = getStore('reminders');
-    const reminders = await store.list();
+
+    // Get all reminders
+    const { blobs } = await store.list();
+    
+    if (!blobs || blobs.length === 0) {
+      console.log('No reminders found');
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ 
+          message: 'No reminders to check',
+          checked: 0,
+          sent: 0
+        })
+      };
+    }
 
     const now = new Date();
+    let checkedCount = 0;
     let sentCount = 0;
 
     // Check each reminder
-    for await (const { key } of reminders) {
-      const reminderData = await store.get(key);
-      if (!reminderData) continue;
+    for (const blob of blobs) {
+      try {
+        checkedCount++;
+        
+        // Get reminder data
+        const reminderJson = await store.get(blob.key);
+        const reminder = JSON.parse(reminderJson);
 
-      const reminder = JSON.parse(reminderData);
+        // Skip if already sent
+        if (reminder.sent) {
+          continue;
+        }
 
-      // Skip if already sent
-      if (reminder.sent) continue;
+        // Check if reminder is due
+        const scheduledTime = new Date(reminder.scheduledTime);
+        if (scheduledTime <= now) {
+          console.log(`Sending reminder: ${reminder.id}`);
 
-      const reminderTime = new Date(reminder.dateTime);
-
-      // If reminder time has passed, send email
-      if (reminderTime <= now) {
-        try {
-          await resend.emails.send({
-            from: 'Reminders <onboarding@resend.dev>',
-            to: reminder.email,
-            subject: `Reminder: ${reminder.text}`,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #667eea;">📧 Reminder Notification</h2>
-                <p style="font-size: 16px; line-height: 1.5;">
-                  This is your scheduled reminder:
-                </p>
-                <div style="background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; margin: 20px 0;">
-                  <p style="font-size: 18px; font-weight: bold; margin: 0;">
-                    ${reminder.text}
+          // Send email via Resend
+          try {
+            await resend.emails.send({
+              from: 'reminders@resend.dev', // Resend's test email for free tier
+              to: reminder.email,
+              subject: '⏰ Reminder from Email Reminder App',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #667eea;">🔔 Your Reminder</h2>
+                  <div style="background: #f7f7f7; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                    <p style="font-size: 18px; margin: 0;">${reminder.text}</p>
+                  </div>
+                  <p style="color: #666; font-size: 14px;">
+                    Scheduled for: ${new Date(reminder.scheduledTime).toLocaleString()}
+                  </p>
+                  <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+                  <p style="color: #999; font-size: 12px;">
+                    This email was sent by Email Reminder App
                   </p>
                 </div>
-                <p style="color: #666; font-size: 14px;">
-                  Scheduled for: ${new Date(reminder.dateTime).toLocaleString()}
-                </p>
-                <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-                <p style="color: #999; font-size: 12px;">
-                  This email was sent by your Email Reminder App
-                </p>
-              </div>
-            `
-          });
+              `
+            });
 
-          // Mark as sent
-          reminder.sent = true;
-          await store.set(key, JSON.stringify(reminder));
-          sentCount++;
+            // Mark as sent
+            reminder.sent = true;
+            reminder.sentAt = new Date().toISOString();
+            await store.set(reminder.id, JSON.stringify(reminder));
+            
+            sentCount++;
+            console.log(`Successfully sent reminder: ${reminder.id}`);
 
-        } catch (emailError) {
-          console.error(`Failed to send reminder ${key}:`, emailError);
+          } catch (emailError) {
+            console.error(`Failed to send email for ${reminder.id}:`, emailError);
+            // Continue to next reminder even if this one fails
+          }
         }
+      } catch (reminderError) {
+        console.error(`Error processing reminder ${blob.key}:`, reminderError);
+        // Continue to next reminder
       }
     }
+
+    console.log(`Checked ${checkedCount} reminders, sent ${sentCount}`);
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        success: true,
-        message: `Checked reminders, sent ${sentCount} email(s)`,
-        sentCount
+        message: 'Reminder check complete',
+        checked: checkedCount,
+        sent: sentCount
       })
     };
 
   } catch (error) {
-    console.error('Error checking reminders:', error);
+    console.error('Error in check-reminders:', error);
     return {
       statusCode: 500,
       headers,
