@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Reminder App</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>📧 Email Reminder Service</h1>
+        <p class="subtitle">Never forget important tasks again!</p>
+
+        <div class="form-card">
+            <h2>Create New Reminder</h2>
+            <form id="reminderForm">
+                <div class="form-group">
+                    <label for="reminderText">What do you want to be reminded about?</label>
+                    <input type="text" id="reminderText" placeholder="e.g., Call the dentist" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reminderDate">Date</label>
+                    <input type="date" id="reminderDate" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reminderTime">Time</label>
+                    <input type="time" id="reminderTime" required>
+                </div>
+
+                <button type="submit" class="btn-primary">Set Reminder</button>
+            </form>
+        </div>
+
+        <div class="reminders-section">
+            <h2>Your Reminders</h2>
+            <div id="remindersList"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
